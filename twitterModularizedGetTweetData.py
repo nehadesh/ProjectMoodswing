@@ -6,10 +6,6 @@ import boto3
 import datetime
 import re
 
-main_df = pd.DataFrame('id_str', 'text', 'retweet_count', 'favorite_count', 'created_at', 'coordinates',
-                       'in_reply_to_screen_name', 'user_id_str', 'user_location', 'user_screen_name', 'hashtags',
-                       'mentions', 'group')
-
 
 def lambda_handler(event, context):
     """ This function downloads tweets that are pulled up based on a particular search string"""
@@ -19,22 +15,26 @@ def lambda_handler(event, context):
     api = authenticate()
 
     # extract the group/category and query from each search string
-    group = search_group[0]
-    query_list = search_group[1]
+    # group = search_group[0]
+    # query_list = search_group[1]
 
+    query_list = ["'donald trump' OR trump"]
+    group = "trump"
+    # has_tweets = False
     for query in query_list:
-        # query = '\"' + query + '\"'
         print("Group: " + group + " \nQuery:" + query)
 
         # try to search twitter for the current query, and if it fails due to a rate limit error, wait 15 mins
         try:
             print("Starting search upload...")
-            # search_tweets("'clover network' OR 'clover app' OR 'gyft'", group, api)
             search_tweets(query, group, api)
             print("Search upload complete...")
         except tweepy.RateLimitError:
             time.sleep(15 * 60)
 
+    # print(json_list)
+    # if has_tweets == True:
+    #     organize_data_return_csv()
     return {
         'statusCode': 200,
         'message': "hi"
@@ -79,9 +79,7 @@ def clean_text(text):
     tweet = re.sub('((www\.[^\s]+)|(https?://[^\s]+))', '', tweet)  # remove URLs
     tweet = re.sub('@[^\s]+', '', tweet)  # remove usernames
     tweet = re.sub(r'#([^\s]+)', r'\1', tweet)  # remove the # in #hashtag
-    # tweet = word_tokenize(tweet) # remove repeated characters (helloooooooo into hello)
-    # words_in_tweet = [word for word in tweet if word not in stopwords]
-    # tweet_string = str(" ".join(words_in_tweet).encode('utf-8'))
+
     print(tweet)
     return tweet
 
@@ -95,33 +93,25 @@ def search_tweets(query, group, api):
     hashtag_list = []
     mention_list = []
     group_list = []
-
-    # calls the search function of the API and gets the 100 most recent tweets
-    status_list = []
-
     try:
-        status_list = api.search(q=query, count=100)
+        status_list = api.search(q=query, count=100, lang="en")
+        if len(status_list) == 0:
+            print("NOTHING IN PAST 7 DAYS ----------------------------------------------------------------")
+            # status list might be empty because we use the Standard Search API
+            # which limits our search history to within the past 7 days
+            # So in this case... do nothing
+            return False
     except:
         print("Failed to find tweets for: " + str(query))
-        pass
+        return False
 
-    if len(status_list) == 0:
-        print("NOTHING IN PAST 7 DAYS ----------------------------------------------------------------")
-        # status list might be empty because we use the Standard Search API
-        # which limits our search history to within the past 7 days
-        # So in this case... do nothing
-        return 0
-
-    # Data structuring --> removing nested jsons
+        # Data structuring --> removing nested jsons
     for status in status_list:
         print("STATUS exists -----------------------------------")
 
         group_list.append(group)
         json_str = json.dumps(status._json)
         json_data = json.loads(json_str)
-
-        if (json_data['lang'] != "en"):
-            continue
 
         # extracting required fields from nested user json
         user = json_data['user']
@@ -156,36 +146,32 @@ def search_tweets(query, group, api):
         print("---------------------------------------- TEXT ----------------------- \n" + tweet_string)
         json_data['text'] = tweet_string
 
+        print(json_data)
         # final list of tweet jsons with nested jsons removed
         json_list.append(json_data)
 
     # create a dataframe based on the list of tweet jsons
     json_df = pd.DataFrame(json_list)
 
-    if status_list:
-        # extracting required fields
-        json_df = json_df[['id_str', 'text', 'retweet_count', 'favorite_count', 'created_at', 'coordinates',
-                           'in_reply_to_screen_name']]
+    # extracting required fields
+    json_df = json_df[
+        ['id_str', 'text', 'retweet_count', 'favorite_count', 'created_at', 'coordinates', 'in_reply_to_screen_name']]
 
-        # creating user_df for nested user json
-        user_df = pd.DataFrame(user_list)
-        hashtag_series = pd.Series(hashtag_list)
-        mention_series = pd.Series(mention_list)
-        group_series = pd.Series(group_list)
-        user_df = user_df[['id_str', 'location', 'screen_name']]
+    # creating user_df for nested user json
+    user_df = pd.DataFrame(user_list)
+    hashtag_series = pd.Series(hashtag_list)
+    mention_series = pd.Series(mention_list)
+    group_series = pd.Series(group_list)
+    user_df = user_df[['id_str', 'location', 'screen_name']]
 
-        # adding required user & entity fields to main json_df
-        json_df['user_id_str'] = user_df['id_str']
-        json_df['user_location'] = user_df['location']
-        json_df['user_screen_name'] = user_df['screen_name']
-        json_df['hashtags'] = hashtag_series
-        json_df['mentions'] = mention_series
-        json_df['group'] = group_series
+    # adding required user & entity fields to main json_df
+    json_df['user_id_str'] = user_df['id_str']
+    json_df['user_location'] = user_df['location']
+    json_df['user_screen_name'] = user_df['screen_name']
+    json_df['hashtags'] = hashtag_series
+    json_df['mentions'] = mention_series
+    json_df['group'] = group_series
 
-        main_df.append(json_df)
-
-
-def df_to_csv():
     # convert data frame to csv and store in s3 bucket
     print("----------------------------- SAVING AS CSV-----------------------------")
     s3 = boto3.resource('s3')
@@ -193,6 +179,6 @@ def df_to_csv():
     filepath = '/tmp/tweets' + str(datetime.datetime.now()) + '.csv'
     with open(filepath, 'w+') as data:
         # write the csv string to a file called tweets(insert timestamp here).csv
-        data.write(main_df.to_csv())
+        data.write(json_df.to_csv(encoding='utf-8'))
     key = 'csv/files' + filepath
     bucket.upload_file(filepath, key)
