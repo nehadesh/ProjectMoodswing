@@ -1,61 +1,137 @@
-import json
-import pymysql
-import sys
-import boto3
+# import tar
+# make sure runtime = Python 3.7
 import csv
+import json
+import os
+# import pandas as pd
+import boto3
+from datetime import datetime
 import numpy as np
+import pandas as pd
+import re
 
-db_host = "pmoodswingdb.c2mtswumiqvy.us-east-1.rds.amazonaws.com"
-db_user = "pmuser"
-db_password = "butterfly"
-db_name = "pmoodswing"
+# calls the AMazon comprehend api
+api = boto3.client('comprehend')
 
+# input bucket
+s3 = boto3.client('s3')
+
+
+# input_path= "tweetdump/csv/files/tmp/" + " "
+# outputpath = "negativetweets/"
 
 def lambda_handler(event, context):
-    # Download the processed tweet from the queue
-    # sqs = boto3.resource('sqs')
+    negCount = 0
+    posCount = 0
+    neuCount = 0
+    bucket = 'tweetdump'
+    if event:
+        file_obj = event["Records"][0]
+        filename = str(file_obj['s3']['object']['key'])
+        fileObj = s3.get_object(Bucket=bucket, Key=filename)
+        file_content = fileObj["Body"].read().decode('utf-8')
 
-    # Get the queue
-    # queue = sqs.get_queue_by_name(QueueName='processed_tweets')        
-    # messages = queue.receive_messages(MessageAttributeNames=['SentimentData'], MaxNumberOfMessages=1)
-    # message = messages[0]
-    # sentimentData = message.message_attributes.get('SentimentData').get('StringValue')
+        rows = csv.reader(file_content.split("\n"))
+        next(rows)
+        for row in rows:
+            if len(row) == 0:
+                break
 
-    # message.delete()
-    for record in event['Records']:
-        dbString = record['body']
+            text = row[2]
+            # generate sentiment score for the text
+            client = boto3.client('comprehend')
+            sentiment = client.detect_sentiment(Text=text, LanguageCode='en')['SentimentScore']
 
-    # dbString = dbString[1:-1]
-    # arrays = dbString.split("]@@@projectmoodswing@@@[")
-    # dbStringRow = arrays[0].split("', '")
-    # dbNumsRow = arrays[1].split(", ")
-    # dbRow = [dbStringRow[0][1:]]
-    # dbRow.append(dbStringRow[1])
-    # dbRow.append(int(dbNumsRow[0]))
-    # dbRow.append(int(dbNumsRow[1]))
-    # dbRow.extend(dbStringRow[2:])
-    # dbRow[-1] = dbRow[-1][:-1]
-    # for field in dbNumsRow[2:]:
-    #     dbRow.append(float(field))
-    # print(dbRow)
+            positive = sentiment["Positive"]
+            neutral = sentiment["Neutral"]
+            negative = sentiment["Negative"]
+            mixed = sentiment["Mixed"]
 
-    # dbEntry = str(dbRow)[1:-1]
-    print(dbString)
-    print("Begin connection")
-    connection = pymysql.connect(host=db_host, user=db_user, password=db_password, database=db_name, connect_timeout=10)
-    print("Connected")
-    with connection.cursor() as cur:
-        sql = """insert into tweets (id_str, tweet_text, retweet_count, favorite_count, created_at, coordinates, 
-        in_reply_to_screen_name, user_id_str, user_location, user_screen_name, hashtags, mentions, product_group, pos_sent, ntrl_sent, neg_sent, mixed_sent, overall_score)
-                values (%s);""" % (dbString)
+            # TODO: Generate the alert score
+            alert_score = 0
+            print(row)
+            # # formatting list of db row entries
+            # dbRow = row[1:]
 
-        # values (%s, %s, %d, %d, %s, %s, %s, %s, %s, %s, %s, %s, %s, %f, %f, %f, %f, %d)
-        cur.execute(sql)
-        connection.commit()
-        cur.close()
-        connection.close()
+            # dbRow[1] = dbRow[1].replace("'", "\\\\'")
+            # dbRow[10] = dbRow[10].replace("'", "\\\\'")
+            # dbRow[11] = dbRow[11].replace("'", "\\\\'")
 
-    return {
-        'statusCode': 200,
-        'body': json.dumps('Hello from Lambda!')
+            # dbRow[2] = int(dbRow[2])
+            # dbRow[3] = int(dbRow[3])
+
+            # tweetdate = dbRow[4]
+            # tokens = tweetdate.split(' ')
+            # date_string = tokens[-1] + '-' + month_to_numbers(tokens[1]) + '-' + tokens[2] + ' ' + tokens[3]
+            # dbRow[4] = date_string
+
+            # numbers = []
+            # numbers.append(int(dbRow[2]))
+            # numbers.append(int(dbRow[3]))
+            # numbers.append(positive)
+            # numbers.append(neutral)
+            # numbers.append(negative)
+            # numbers.append(mixed)
+            # numbers.append(alert_score)
+
+            # dbRow.pop(2)
+            # dbRow.pop(2)
+            # print(dbRow)
+            # print(numbers)
+
+            # # Move to write_tweet_to_db
+            # dbString = str(dbRow)
+            # dbString = dbString.replace('"', "'")
+            # body = dbString + "@@@projectmoodswing@@@" + str(numbers)
+            # print(body)
+
+            # ---------------------------------------- REMOVE ---------------------------------------
+
+            # string formatting to generate row of values to insert into the db
+            dbRow = "\"" + row[1] + "\",\"" + row[2] + "\"," + row[3] + "," + row[4] + ",\""
+            tweetdate = row[5]
+            tokens = tweetdate.split(' ')
+            date_string = tokens[-1] + '-' + month_to_numbers(tokens[1]) + '-' + tokens[2] + ' ' + tokens[3]
+            dbRow += date_string + "\",\""
+            remString = "\",\"".join([str(x) for x in row[6:]])
+            print("REM: " + remString)
+            dbRow += remString + "\","
+            sentimentString = "{0},{1},{2},{3},{4}".format(positive, neutral, negative, mixed, alert_score)
+            dbRow += sentimentString
+            print(dbRow)
+            dbRow = dbRow.replace("'", "\\\\'")
+            dbRow = dbRow.replace('"', "'")
+            body = dbRow
+            print(dbRow)
+            break
+            # TODO: If timeout error rerun it
+
+            # Upload the processed sentiment and the tweet to a queue
+            sqs = boto3.resource('sqs')
+            queue = sqs.get_queue_by_name(QueueName='processed_tweets')
+
+            # Define the messages's structure
+            response = queue.send_message(MessageBody=body)
+
+            print(response.get('MessageId'))
+            print("Failure: " + str(response.get('Failure')))
+
+    return {"message - ": "hi"}
+
+
+def month_to_numbers(month):
+    switcher = {
+        'Jan': '01',
+        'Feb': '02',
+        'Mar': '03',
+        'Apr': '04',
+        'May': '05',
+        'Jun': '06',
+        'Jul': '07',
+        'Aug': '08',
+        'Sep': '09',
+        'Oct': '10',
+        'Nov': '11',
+        'Dec': '12'
     }
+    return switcher[month]
