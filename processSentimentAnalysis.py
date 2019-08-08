@@ -10,30 +10,31 @@ import numpy as np
 import pandas as pd
 import re
 
-# calls the AMazon comprehend api
-api = boto3.client('comprehend')
-
 # input bucket
+s3res = boto3.resource('s3')
 s3 = boto3.client('s3')
 
 
 # input_path= "tweetdump/csv/files/tmp/" + " "
 # outputpath = "negativetweets/"
-
 def lambda_handler(event, context):
-    negCount = 0
-    posCount = 0
-    neuCount = 0
     bucket = 'tweetdump'
     if event:
         file_obj = event["Records"][0]
         filename = str(file_obj['s3']['object']['key'])
+        # print(filename)
+        # fileObj = s3res.Object(bucket, filename)
+        # print(fileObj)
         fileObj = s3.get_object(Bucket=bucket, Key=filename)
+
         file_content = fileObj["Body"].read().decode('utf-8')
 
         rows = csv.reader(file_content.split("\n"))
         next(rows)
         for row in rows:
+            # A dictionary of all the associated sentiment values for SQS
+            sentimentMap = {}
+
             if len(row) == 0:
                 break
 
@@ -47,76 +48,120 @@ def lambda_handler(event, context):
             negative = sentiment["Negative"]
             mixed = sentiment["Mixed"]
 
+            # Adding to dictionary for SQS messaging
+            sentimentMap['positive score'] = str(sentiment['Positive'])
+            sentimentMap['neutral score'] = str(sentiment['Neutral'])
+            sentimentMap['negative score'] = str(sentiment['Negative'])
+            sentimentMap['mixed score'] = str(sentiment['Mixed'])
+            rt_count = row[3]
+            fav_count = row[4]
             # TODO: Generate the alert score
-            alert_score = 0
-            print(row)
-            # # formatting list of db row entries
-            # dbRow = row[1:]
+            sent_score = (negative * 10) / neutral
+            quant_score = (1 + int(rt_count) + (int(fav_count) * .5)) / 10
+            alert_score = sent_score * quant_score * mixed
 
-            # dbRow[1] = dbRow[1].replace("'", "\\\\'")
-            # dbRow[10] = dbRow[10].replace("'", "\\\\'")
-            # dbRow[11] = dbRow[11].replace("'", "\\\\'")
+            # Add in the alert score
+            sentimentMap['alert score'] = str(alert_score)
 
-            # dbRow[2] = int(dbRow[2])
-            # dbRow[3] = int(dbRow[3])
-
-            # tweetdate = dbRow[4]
-            # tokens = tweetdate.split(' ')
-            # date_string = tokens[-1] + '-' + month_to_numbers(tokens[1]) + '-' + tokens[2] + ' ' + tokens[3]
-            # dbRow[4] = date_string
-
-            # numbers = []
-            # numbers.append(int(dbRow[2]))
-            # numbers.append(int(dbRow[3]))
-            # numbers.append(positive)
-            # numbers.append(neutral)
-            # numbers.append(negative)
-            # numbers.append(mixed)
-            # numbers.append(alert_score)
-
-            # dbRow.pop(2)
-            # dbRow.pop(2)
-            # print(dbRow)
-            # print(numbers)
-
-            # # Move to write_tweet_to_db
-            # dbString = str(dbRow)
-            # dbString = dbString.replace('"', "'")
-            # body = dbString + "@@@projectmoodswing@@@" + str(numbers)
-            # print(body)
-
-            # ---------------------------------------- REMOVE ---------------------------------------
-
-            # string formatting to generate row of values to insert into the db
-            dbRow = "\"" + row[1] + "\",\"" + row[2] + "\"," + row[3] + "," + row[4] + ",\""
-            tweetdate = row[5]
-            tokens = tweetdate.split(' ')
-            date_string = tokens[-1] + '-' + month_to_numbers(tokens[1]) + '-' + tokens[2] + ' ' + tokens[3]
-            dbRow += date_string + "\",\""
-            remString = "\",\"".join([str(x) for x in row[6:]])
-            print("REM: " + remString)
-            dbRow += remString + "\","
-            sentimentString = "{0},{1},{2},{3},{4}".format(positive, neutral, negative, mixed, alert_score)
-            dbRow += sentimentString
-            print(dbRow)
-            dbRow = dbRow.replace("'", "\\\\'")
-            dbRow = dbRow.replace('"', "'")
-            body = dbRow
-            print(dbRow)
-            break
             # TODO: If timeout error rerun it
+            # Adding in all other attributes into the map
+            sentimentMap['id str'] = 'null' if len(row[1]) == 0 else row[1]
+            sentimentMap['tweet text'] = 'null' if len(row[2]) == 0 else row[2]
+            if sentimentMap['tweet_text'] != 'null':
+                tweet_text = sentimentMap['tweet_text']
+                tweet_text = tweet_text.replace('"', '')
+                tweet_text = tweet_text.replace("'", '')
+                sentimentMap['tweet_text'] = tweet_text
+
+            sentimentMap['retweet count'] = 'null' if len(row[3]) == 0 else row[3]
+            sentimentMap['favorite count'] = 'null' if len(row[4]) == 0 else row[4]
+            sentimentMap['created at'] = date_string
+            sentimentMap['coordinates'] = 'null' if len(row[6]) == 0 else row[6]
+            sentimentMap['in reply to screen name'] = 'null' if len(row[7]) == 0 else row[7]
+            sentimentMap['user id str'] = 'null' if len(row[8]) == 0 else row[8]
+            sentimentMap['user location'] = 'null' if len(row[9]) == 0 else row[9]
+            sentimentMap['user screen name'] = 'null' if len(row[10]) == 0 else row[10]
+            sentimentMap['hashtags'] = 'null' if len(row[11]) == 0 else row[11]
+            if sentimentMap['hashtags'] != 'null':
+                hashtags = sentimentMap['hashtags']
+                hashtags.replace("'", '')
+                hashtags = hashtags[1:-1]
+                if len(hashtags) == 0:
+                    hashtags = 'null'
+                sentimentMap['hashtags'] = hashtags
+            sentimentMap['mentions'] = 'null' if len(row[12]) == 0 else row[12]
+            if sentimentMap['mentions'] != 'null':
+                mentions = sentimentMap['mentions']
+                mentions.replace("'", '')
+                mentions = mentions[1:-1]
+                if len(mentions) == 0:
+                    mentions = 'null'
+                print(mentions)
+                sentimentMap['mentions'] = mentions
+            sentimentMap['group'] = 'null' if len(row[13]) == 0 else row[13]
+
+            print(sentimentMap)
 
             # Upload the processed sentiment and the tweet to a queue
             sqs = boto3.resource('sqs')
             queue = sqs.get_queue_by_name(QueueName='processed_tweets')
-
             # Define the messages's structure
-            response = queue.send_message(MessageBody=body)
-
+            response = queue.send_message(MessageBody=body, MessageAttributes={
+                'ids': {
+                    'StringValue': sentimentMap['id str'] + ' ' + sentimentMap['in reply to screen name'] + ' ' +
+                                   sentimentMap['user id str'] + ' ' + sentimentMap['user screen name'],
+                    'DataType': 'String'
+                },
+                'tweet_text': {
+                    'StringValue': sentimentMap['tweet text'],
+                    'DataType': 'String'
+                },
+                'counts': {
+                    'StringValue': sentimentMap['retweet count'] + " " + sentimentMap['favorite count'],
+                    'DataType': 'String'
+                },
+                'created_at': {
+                    'StringValue': sentimentMap['created at'],
+                    'DataType': 'String'
+                },
+                'coordinates': {
+                    'StringValue': sentimentMap['coordinates'],
+                    'DataType': 'String'
+                },
+                'user_location': {
+                    'StringValue': sentimentMap['user location'],
+                    'DataType': 'String'
+                },
+                'hashtags': {
+                    'StringValue': sentimentMap['hashtags'],
+                    'DataType': 'String'
+                },
+                'mentions': {
+                    'StringValue': sentimentMap['mentions'],
+                    'DataType': 'String'
+                },
+                'group': {
+                    'StringValue': sentimentMap['group'],
+                    'DataType': 'String'
+                },
+                'scores': {
+                    'StringValue': sentimentMap['positive score'] + " " + sentimentMap['neutral score'] + " " +
+                                   sentimentMap['negative score'] + " " + sentimentMap['mixed score'] + " " +
+                                   sentimentMap['alert score'],
+                    'DataType': 'String'
+                }
+            }
+                                          )
             print(response.get('MessageId'))
             print("Failure: " + str(response.get('Failure')))
 
     return {"message - ": "hi"}
+
+
+"""
+Psuedo switch statement used to convert month abbreviations to their numerical
+counterpart. Used to help reformat Tweet dates to YY-MM-DD TIME format.   
+"""
 
 
 def month_to_numbers(month):
