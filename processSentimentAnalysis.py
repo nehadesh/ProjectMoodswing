@@ -39,39 +39,37 @@ def lambda_handler(event, context):
                 break
 
             text = row[2]
+
+            tweetdate = row[5]
+            tokens = tweetdate.split(' ')
+            date_string = tokens[-1] + '-' + month_to_numbers(tokens[1]) + '-' + tokens[2] + ' ' + tokens[3]
+
             # generate sentiment score for the text
             client = boto3.client('comprehend')
-            sentiment = client.detect_sentiment(Text=text, LanguageCode='en')['SentimentScore']
-
+            sentimentJSON = client.detect_sentiment(Text=text, LanguageCode='en')
+            overall_sentiment = sentimentJSON['Sentiment']
+            sentiment = sentimentJSON['SentimentScore']
             positive = sentiment["Positive"]
             neutral = sentiment["Neutral"]
             negative = sentiment["Negative"]
             mixed = sentiment["Mixed"]
 
             # Adding to dictionary for SQS messaging
-            sentimentMap['positive score'] = str(sentiment['Positive'])
-            sentimentMap['neutral score'] = str(sentiment['Neutral'])
-            sentimentMap['negative score'] = str(sentiment['Negative'])
-            sentimentMap['mixed score'] = str(sentiment['Mixed'])
-            rt_count = row[3]
-            fav_count = row[4]
-            # TODO: Generate the alert score
-            sent_score = (negative * 10) / neutral
-            quant_score = (1 + int(rt_count) + (int(fav_count) * .5)) / 10
-            alert_score = sent_score * quant_score * mixed
-
-            # Add in the alert score
-            sentimentMap['alert score'] = str(alert_score)
+            sentimentMap['positive score'] = str(positive)
+            sentimentMap['neutral score'] = str(neutral)
+            sentimentMap['negative score'] = str(negative)
+            sentimentMap['mixed score'] = str(mixed)
+            sentimentMap['overall sentiment'] = str(overall_sentiment)
 
             # TODO: If timeout error rerun it
             # Adding in all other attributes into the map
             sentimentMap['id str'] = 'null' if len(row[1]) == 0 else row[1]
             sentimentMap['tweet text'] = 'null' if len(row[2]) == 0 else row[2]
-            if sentimentMap['tweet_text'] != 'null':
-                tweet_text = sentimentMap['tweet_text']
+            if sentimentMap['tweet text'] != 'null':
+                tweet_text = sentimentMap['tweet text']
                 tweet_text = tweet_text.replace('"', '')
                 tweet_text = tweet_text.replace("'", '')
-                sentimentMap['tweet_text'] = tweet_text
+                sentimentMap['tweet text'] = tweet_text
 
             sentimentMap['retweet count'] = 'null' if len(row[3]) == 0 else row[3]
             sentimentMap['favorite count'] = 'null' if len(row[4]) == 0 else row[4]
@@ -106,7 +104,7 @@ def lambda_handler(event, context):
             sqs = boto3.resource('sqs')
             queue = sqs.get_queue_by_name(QueueName='processed_tweets')
             # Define the messages's structure
-            response = queue.send_message(MessageBody=body, MessageAttributes={
+            response = queue.send_message(MessageAttributes={
                 'ids': {
                     'StringValue': sentimentMap['id str'] + ' ' + sentimentMap['in reply to screen name'] + ' ' +
                                    sentimentMap['user id str'] + ' ' + sentimentMap['user screen name'],
@@ -147,11 +145,11 @@ def lambda_handler(event, context):
                 'scores': {
                     'StringValue': sentimentMap['positive score'] + " " + sentimentMap['neutral score'] + " " +
                                    sentimentMap['negative score'] + " " + sentimentMap['mixed score'] + " " +
-                                   sentimentMap['alert score'],
+                                   sentimentMap['overall sentiment'],
                     'DataType': 'String'
                 }
             }
-                                          )
+            )
             print(response.get('MessageId'))
             print("Failure: " + str(response.get('Failure')))
 
