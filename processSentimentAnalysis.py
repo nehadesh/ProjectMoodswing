@@ -99,12 +99,12 @@ def lambda_handler(event, context):
             sentimentMap['group'] = 'null' if len(row[13]) == 0 else row[13]
 
             print(sentimentMap)
-
+            body = "twitter.com/status/" + sentimentMap['id str']
             # Upload the processed sentiment and the tweet to a queue
             sqs = boto3.resource('sqs')
             queue = sqs.get_queue_by_name(QueueName='processed_tweets')
             # Define the messages's structure
-            response = queue.send_message(MessageAttributes={
+            response = queue.send_message(MessageBody=body, MessageAttributes={
                 'ids': {
                     'StringValue': sentimentMap['id str'] + ' ' + sentimentMap['in reply to screen name'] + ' ' +
                                    sentimentMap['user id str'] + ' ' + sentimentMap['user screen name'],
@@ -149,7 +149,7 @@ def lambda_handler(event, context):
                     'DataType': 'String'
                 }
             }
-            )
+                                          )
             print(response.get('MessageId'))
             print("Failure: " + str(response.get('Failure')))
 
