@@ -7,20 +7,25 @@ import numpy as np
 import base64
 from botocore.config import Config
 
-db_host = "pmoodswingdb.c2mtswumiqvy.us-east-1.rds.amazonaws.com"
-db_user = "pmuser"
-db_password = "275UNSdNnh9ZcSJX"
-db_name = "pmoodswing"
-aws_region = "us-east-1"
+"""
+@author : Neha Deshpande, Meghan Walther, Harrison Banh
+Writes a single tweet from the SQS message attributes into the RDS database
+"""
 
 
 def lambda_handler(event, context):
-    # Unpacking the message for the sentiment data
+
+    """
+    triggered by an SQS message in the processed_tweets queue
+    tweet is broken down into it's fields in message attributes
+    the SQS message is unpacked into database entry values
+    The tweet is then written into the database
+    """
+    # Unpacking the SQS message for the sentiment data
     dataMap = {}
     for record in event['Records']:
         message_attributes = record['messageAttributes']
 
-        print(message_attributes)
         ids = message_attributes['ids']['stringValue']
         ids = ids.split(' ')
         dataMap['id_str'] = ids[0]
@@ -48,7 +53,6 @@ def lambda_handler(event, context):
         counts = counts.split(' ')
         dataMap['retweet_count'] = int(counts[0])
         dataMap['favorite_count'] = int(counts[1])
-        print(type(dataMap['retweet_count']), type(dataMap['favorite_count']))
 
         dataMap['created_at'] = message_attributes['created_at']['stringValue']
         dataMap['created_at'] = '"' + dataMap['created_at'] + '"'
@@ -68,15 +72,15 @@ def lambda_handler(event, context):
         dataMap['product_group'] = message_attributes['group']['stringValue']
         dataMap['product_group'] = '"' + dataMap['product_group'] + '"'
 
-    print(dataMap)
 
-    print("Begin connection")
+    # Get database credentials to connect to database
     secret = get_secret()
     secret_dict = eval(secret)
     connection = pymysql.connect(host=secret_dict['host'], user=secret_dict['username'],
                                  password=secret_dict['password'], database=secret_dict['dbname'], connect_timeout=10)
-    print("Connected")
+
     with connection.cursor() as cur:
+        # SQL insert statement
         insertQuery = """insert into tweets (id_str, tweet_text, retweet_count, favorite_count, created_at, coordinates, 
         in_reply_to_screen_name, user_id_str, user_location, user_screen_name, hashtags, mentions, product_group, 
         pos_sent, ntrl_sent, neg_sent, mixed_sent, sentiment)
@@ -87,30 +91,35 @@ def lambda_handler(event, context):
         dataMap['product_group'], dataMap['pos_sent'], dataMap['ntrl_sent'], dataMap['neg_sent'], dataMap['mixed_sent'],
         dataMap['sentiment'])
 
+        # SQL update statment
         updateQuery = """update tweets set tweet_text = %s, retweet_count = %d, favorite_count = %d, created_at =  %s, coordinates = %s, in_reply_to_screen_name = %s, user_id_str = %s, user_location = %s, user_screen_name = %s, hashtags = %s, mentions = %s, product_group = %s, pos_sent = %f, ntrl_sent = %f, neg_sent = %f, mixed_sent = %f, sentiment = %s where id_str = %s;""" % (
         dataMap['tweet_text'], int(dataMap['retweet_count']), int(dataMap['favorite_count']), dataMap['created_at'],
         dataMap['coordinates'], dataMap['in_reply_to_screen_name'], dataMap['user_id_str'], dataMap['user_location'],
         dataMap['user_screen_name'], dataMap['hashtags'], dataMap['mentions'], dataMap['product_group'],
         dataMap['pos_sent'], dataMap['ntrl_sent'], dataMap['neg_sent'], dataMap['mixed_sent'], dataMap['sentiment'],
         dataMap['id_str'])
-        print("QUERY: " + updateQuery)
+
+        # Try to insert the tweet into the database, and if it already exists in the table,
+        # update the entry
         try:
             cur.execute(insertQuery)
-        except pymysql.IntegrityError as error:
-            print("Detected error: " + str(error))
-            print("Updating table instead.... ")
+        except pymysql.IntegrityError:
+            # DuplicateEntryError is categorized under an Integrity Error
             cur.execute(updateQuery)
+
         connection.commit()
         cur.close()
         connection.close()
 
     return {
         'statusCode': 200,
-        'body': json.dumps('Hello from Lambda!')
+        'body': json.dumps('Tweet written to database!')
     }
 
 
 def get_secret():
+    """ get's the secret username and password to make the connection to the database """
+
     secret_name = "ProjMoodswing/MySQL"
     session = boto3.session.Session()
     client = session.client(service_name='secretsmanager',

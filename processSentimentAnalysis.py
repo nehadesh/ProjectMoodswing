@@ -1,35 +1,30 @@
-# import tar
 # make sure runtime = Python 3.7
 import csv
 import json
-import os
-# import pandas as pd
 import boto3
-from datetime import datetime
-import numpy as np
-import pandas as pd
-import re
 
-# input bucket
-s3res = boto3.resource('s3')
 s3 = boto3.client('s3')
 
+"""
+@author: Neha Deshpande, Harrison Banh
+Triggered by the creation of a csv file of tweets in the S3 bucket tweetdump/csv/files/tmp
+Makes a call to Amazon Comprehend in order to determine the sentiment of each tweet
+Writes the tweet as a message to the SQS queue processed_tweets so that it can be 
+written into the db by the next lambda function
+"""
 
-# input_path= "tweetdump/csv/files/tmp/" + " "
-# outputpath = "negativetweets/"
 def lambda_handler(event, context):
     bucket = 'tweetdump'
     if event:
+        # get S3 file whose creation triggered this lambda
         file_obj = event["Records"][0]
         filename = str(file_obj['s3']['object']['key'])
-        # print(filename)
-        # fileObj = s3res.Object(bucket, filename)
-        # print(fileObj)
         fileObj = s3.get_object(Bucket=bucket, Key=filename)
 
+        # read the csv file
         file_content = fileObj["Body"].read().decode('utf-8')
-
         rows = csv.reader(file_content.split("\n"))
+        # skip the row of column headers
         next(rows)
         for row in rows:
             # A dictionary of all the associated sentiment values for SQS
@@ -40,6 +35,7 @@ def lambda_handler(event, context):
 
             text = row[2]
 
+            # format the date into a YY-MM-DD HH:MM:SS
             tweetdate = row[5]
             tokens = tweetdate.split(' ')
             date_string = tokens[-1] + '-' + month_to_numbers(tokens[1]) + '-' + tokens[2] + ' ' + tokens[3]
@@ -61,7 +57,6 @@ def lambda_handler(event, context):
             sentimentMap['mixed score'] = str(mixed)
             sentimentMap['overall sentiment'] = str(overall_sentiment)
 
-            # TODO: If timeout error rerun it
             # Adding in all other attributes into the map
             sentimentMap['id str'] = 'null' if len(row[1]) == 0 else row[1]
             sentimentMap['tweet text'] = 'null' if len(row[2]) == 0 else row[2]
@@ -103,7 +98,7 @@ def lambda_handler(event, context):
             # Upload the processed sentiment and the tweet to a queue
             sqs = boto3.resource('sqs')
             queue = sqs.get_queue_by_name(QueueName='processed_tweets')
-            # Define the messages's structure
+            # Define the messages's structure and send all the tweet attributes to SQS queue: processed_tweets as a message
             response = queue.send_message(MessageBody=body, MessageAttributes={
                 'ids': {
                     'StringValue': sentimentMap['id str'] + ' ' + sentimentMap['in reply to screen name'] + ' ' +
@@ -153,7 +148,10 @@ def lambda_handler(event, context):
             print(response.get('MessageId'))
             print("Failure: " + str(response.get('Failure')))
 
-    return {"message - ": "hi"}
+    return {
+        'statusCode': 200,
+        'body': json.dumps('Tweets have been processed and pushed into processed_tweets')
+    }
 
 
 """
