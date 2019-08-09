@@ -9,7 +9,7 @@ Project Mood Swing is a tool to send alerts when an influx of negative tweets ha
  * CSS
  * SQL
 
-## Instilation
+## Installation
  We created layers in AWS so that allows us to zip files we needed to run the lambda function without having to put the imports in the code (ZIP.md)
 
 ### Services
