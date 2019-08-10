@@ -3,7 +3,7 @@ Project Mood Swing is a tool to send alerts when an influx of negative tweets ha
 
  
 
-## Langauges
+## Languages
  * Python
  * HTML
  * CSS
