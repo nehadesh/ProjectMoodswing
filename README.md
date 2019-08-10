@@ -75,11 +75,11 @@ Ex: clover AND terminal
     * Mass twitter searches for specific things
 
 
-## Conatcts
+## Contacts
 - For any questions, comments, or concerns please contact Projectmoodswing@FirstData.com
 
 
-# Contrinbutors 
+# Contributors 
 Harrison Banh
 Neha Deshpande
 Abbey Fagen
