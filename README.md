@@ -80,15 +80,15 @@ Ex: clover AND terminal
 
 
 # Contributors 
-Harrison Banh
-Neha Deshpande
-Abbey Fagen
-Anna Moody
-Mitchell Peters
-Aaliyah Smith
-Meghan Walther
-Jordan Whitaker
-Kimberly Yu
+Harrison Banh, 
+Neha Deshpande, 
+Abbey Fagen, 
+Anna Moody, 
+Mitchell Peters, 
+Aaliyah Smith, 
+Meghan Walther, 
+Jordan Whitaker, 
+Kimberly Yu, 
 
 
 
