@@ -1,5 +1,5 @@
 # Project Moodswing
-Project Moodswing is a tool to send alerts when an influx of negative tweets have been decected through the built in sentiment analysis. 
+Project Moodswing is a tool to send alerts when an influx of negative tweets have been detected through the built in sentiment analysis. 
 
  
 
